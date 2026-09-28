@@ -2,6 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bevy::ecs::system::SystemParam;
 use bevy::input_focus::AutoFocus;
 use bevy::{
     prelude::*,
@@ -114,6 +115,14 @@ struct NameServerError(Option<String>);
 #[derive(Resource, Default)]
 struct LastNameValue(String);
 
+#[derive(SystemParam)]
+struct CreationScreenState<'w> {
+    form: ResMut<'w, CreationForm>,
+    preview: ResMut<'w, CreatePreview>,
+    server_error: ResMut<'w, NameServerError>,
+    last_name: ResMut<'w, LastNameValue>,
+}
+
 #[derive(Component)]
 struct CreatePreviewCharacter;
 #[derive(Component)]
@@ -167,17 +176,14 @@ fn show_character_create_screen(
     mut commands: Commands,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
-    mut form: ResMut<CreationForm>,
-    mut preview: ResMut<CreatePreview>,
-    mut server_error: ResMut<NameServerError>,
-    mut last_name: ResMut<LastNameValue>,
+    mut creation: CreationScreenState,
     session: Option<Res<UserSession>>,
 ) {
-    *form = CreationForm::default();
-    server_error.0 = None;
-    last_name.0.clear();
+    *creation.form = CreationForm::default();
+    creation.server_error.0 = None;
+    creation.last_name.0.clear();
     let target = spawn_preview_diorama(&mut commands, &mut images, 1, 2.0);
-    preview.target = Some(target.clone());
+    creation.preview.target = Some(target.clone());
     let realm = session
         .as_ref()
         .and_then(|session| session.selected_server.as_ref())
@@ -202,7 +208,7 @@ fn show_character_create_screen(
 
     spawn_header(&mut commands, &assets, root);
     spawn_stage(&mut commands, &assets, root, target);
-    spawn_form_rail(&mut commands, &assets, root, realm, &form.0);
+    spawn_form_rail(&mut commands, &assets, root, realm, &creation.form.0);
 }
 
 fn spawn_header(commands: &mut Commands, assets: &AssetServer, parent: Entity) {
