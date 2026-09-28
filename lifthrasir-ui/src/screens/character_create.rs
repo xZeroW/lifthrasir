@@ -66,6 +66,7 @@ impl Plugin for CharacterCreateScreenPlugin {
         app.init_resource::<CreationForm>();
         app.init_resource::<CreatePreview>();
         app.init_resource::<NameServerError>();
+        app.init_resource::<LastNameValue>();
         app.add_systems(
             OnEnter(GameState::CharacterCreation),
             show_character_create_screen,
@@ -109,6 +110,9 @@ struct CreatePreview {
 
 #[derive(Resource, Default)]
 struct NameServerError(Option<String>);
+
+#[derive(Resource, Default)]
+struct LastNameValue(String);
 
 #[derive(Component)]
 struct CreatePreviewCharacter;
@@ -166,10 +170,12 @@ fn show_character_create_screen(
     mut form: ResMut<CreationForm>,
     mut preview: ResMut<CreatePreview>,
     mut server_error: ResMut<NameServerError>,
+    mut last_name: ResMut<LastNameValue>,
     session: Option<Res<UserSession>>,
 ) {
     *form = CreationForm::default();
     server_error.0 = None;
+    last_name.0.clear();
     let target = spawn_preview_diorama(&mut commands, &mut images, 1, 2.0);
     preview.target = Some(target.clone());
     let realm = session
@@ -802,6 +808,7 @@ fn preview_components(form: &CharacterCreationForm) -> (CharacterData, Character
 fn reflect_form_values(
     form: Res<CreationForm>,
     mut server_error: ResMut<NameServerError>,
+    mut last_name: ResMut<LastNameValue>,
     names: Query<Ref<EditableText>, With<NameField>>,
     mut values: Query<(&mut Text, &FormValue), (Without<NameTrailing>, Without<NameStatus>)>,
     mut swatches: Query<(&HairSwatch, &mut BorderColor, &mut Node)>,
@@ -826,14 +833,41 @@ fn reflect_form_values(
     }
 
     let Ok(name) = names.single() else { return };
-    if name.is_changed() {
-        server_error.0 = None;
-    }
     let value = name.value().to_string();
+    if value != last_name.0 {
+        server_error.0 = None;
+        last_name.0.clone_from(&value);
+    }
     let state = name_state(&value, server_error.0.as_deref());
-    let (trailing_text, status_text, color) = match state {
+    let (trailing_text, status_text, color) =
+        name_feedback(state, &value, server_error.0.as_deref());
+    for (mut text, mut text_color) in &mut trailing {
+        **text = trailing_text.clone();
+        text_color.0 = color;
+    }
+    for (mut text, mut text_color) in &mut statuses {
+        **text = status_text.clone();
+        text_color.0 = color;
+    }
+    let enabled = state == NameState::Ok;
+    for (mut pickable, mut gradient) in &mut create_buttons {
+        *pickable = if enabled {
+            Pickable::default()
+        } else {
+            Pickable::IGNORE
+        };
+        *gradient = primary_gradient(enabled);
+    }
+}
+
+fn name_feedback(
+    state: NameState,
+    name: &str,
+    server_error: Option<&str>,
+) -> (String, String, Color) {
+    match state {
         NameState::Idle => (
-            format!("{}/16", value.chars().count()),
+            format!("{}/16", name.chars().count()),
             String::new(),
             theme::TEXT_FAINT,
         ),
@@ -854,26 +888,9 @@ fn reflect_form_values(
         ),
         NameState::ServerError => (
             "!".into(),
-            server_error.0.clone().unwrap_or_default(),
+            server_error.unwrap_or_default().into(),
             theme::BAD,
         ),
-    };
-    for (mut text, mut text_color) in &mut trailing {
-        **text = trailing_text.clone();
-        text_color.0 = color;
-    }
-    for (mut text, mut text_color) in &mut statuses {
-        **text = status_text.clone();
-        text_color.0 = color;
-    }
-    let enabled = state == NameState::Ok;
-    for (mut pickable, mut gradient) in &mut create_buttons {
-        *pickable = if enabled {
-            Pickable::default()
-        } else {
-            Pickable::IGNORE
-        };
-        *gradient = primary_gradient(enabled);
     }
 }
 
@@ -977,6 +994,39 @@ mod tests {
             name_state("Valkyrie", server_error.as_deref()),
             NameState::Ok
         );
+    }
+
+    #[test]
+    fn server_name_error_is_displayed_in_red() {
+        let feedback = name_feedback(
+            NameState::ServerError,
+            "ForbiddenName",
+            Some("Invalid character name"),
+        );
+        assert_eq!(feedback.0, "!");
+        assert_eq!(feedback.1, "Invalid character name");
+        assert_eq!(feedback.2, theme::BAD);
+    }
+
+    #[test]
+    fn server_name_error_clears_only_when_the_name_changes() {
+        let mut last_name = LastNameValue("ForbiddenName".into());
+        let mut server_error = NameServerError(Some("Invalid character name".into()));
+
+        let unchanged = "ForbiddenName";
+        if unchanged != last_name.0 {
+            server_error.0 = None;
+            last_name.0.clone_from(&unchanged.to_string());
+        }
+        assert_eq!(server_error.0.as_deref(), Some("Invalid character name"));
+
+        let changed = "AllowedName";
+        if changed != last_name.0 {
+            server_error.0 = None;
+            last_name.0.clone_from(&changed.to_string());
+        }
+        assert!(server_error.0.is_none());
+        assert_eq!(last_name.0, "AllowedName");
     }
 
     #[test]
